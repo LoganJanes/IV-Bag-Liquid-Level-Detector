@@ -12,7 +12,7 @@ class IVBagLevelDetector:
 
 #Our first step is Grayscaling the image to remove it's colour with the following function:
 
-def step1_grayscale(self, image: np.ndarray) -> np.ndarray:
+def grayscale(self, image: np.ndarray) -> np.ndarray:
     if len(image.shape) == 3:
         gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
