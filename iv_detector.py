@@ -17,6 +17,4 @@ def grayscale(self, image: np.ndarray) -> np.ndarray:
         gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray_image = image.copy()
-    if self.debug:
-        self.processing_steps['grayscale'] = gray_image
     return gray_image
