@@ -20,10 +20,19 @@ def grayscale(self, image: np.ndarray) -> np.ndarray:
     return gray_image
 
 
-#Our second step is to use a median blur to  reduce salt-and-pepper noise while preserving edges of the liquid
+#Our second step is to use a median filter to  reduce salt-and-pepper noise while preserving edges of the liquid
 
 def median_blur(self, image: np.ndarray, kernel_size: int = 5) -> np.ndarray:
     blurred = cv2.medianBlur(image, kernel_size)
-    if self.debug:
-        self.processing_steps['median_blur'] = blurred
     return blurred
+
+
+#Our third step is to use canny edge detection to find the strong edges after the median filter smoothed the image and preserved edges.
+
+def canny_edge_detection(self, image: np.ndarray, 
+                               low_threshold: int = 50, 
+                               high_threshold: int = 150) -> np.ndarray:
+    edges = cv2.Canny(image, low_threshold, high_threshold)
+    return edges
+
+
