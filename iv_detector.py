@@ -36,3 +36,22 @@ def canny_edge_detection(self, image: np.ndarray,
     return edges
 
 
+#Our fourth step is to introduce a region of interest so the algorithm will focus only on the liquid and not on labels, text, and other things.
+
+def region_of_interest(self, image: np.ndarray, 
+                             roi_coords: Optional[Tuple[int, int, int, int]] = None) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
+    height, width = image.shape[:2]
+    if roi_coords is None:
+        x = width // 4
+        y = height // 6
+        w = width // 2
+        h = 2 * height // 3
+        roi_coords = (x, y, w, h)
+    x, y, w, h = roi_coords
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    mask[y:y+h, x:x+w] = 255
+    roi_image = cv2.bitwise_and(image, image, mask=mask)
+    if self.debug:
+        self.processing_steps['roi'] = roi_image
+        self.processing_steps['roi_coords'] = roi_coords
+    return roi_image, roi_coords
