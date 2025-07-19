@@ -18,3 +18,12 @@ def grayscale(self, image: np.ndarray) -> np.ndarray:
     else:
         gray_image = image.copy()
     return gray_image
+
+
+#Our second step is to use a median blur to  reduce salt-and-pepper noise while preserving edges of the liquid
+
+def median_blur(self, image: np.ndarray, kernel_size: int = 5) -> np.ndarray:
+    blurred = cv2.medianBlur(image, kernel_size)
+    if self.debug:
+        self.processing_steps['median_blur'] = blurred
+    return blurred
