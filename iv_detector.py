@@ -143,8 +143,13 @@ class IVBagLevelDetector:
 
 if __name__ == "__main__":
     detector = IVBagLevelDetector(debug=True)
-    results = detector.detect_liquid_level("test_iv.jpg")
-    print(f"Fluid Level: {results['fluid_level_percentage']:.2f}%")
-    print(f"Classification: {results['status']}")
+
+    image_files = ["high_iv.jpg", "medium_iv.jpg", "low_iv.jpg"]
+
+    for image_path in image_files:
+        print(f"\n--- Processing {image_path} ---")
+        results = detector.detect_liquid_level(image_path)
+        print(f"Fluid Level: {results['fluid_level_percentage']:.2f}%")
+        print(f"Classification: {results['status']}")
 
 
