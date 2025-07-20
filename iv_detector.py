@@ -90,3 +90,12 @@ def calculate_fluid_height(self, image: np.ndarray, roi_coords: Tuple[int, int, 
         fluid_level_percentage = 0.0
 
     return fluid_height_pixels, fluid_level_percentage
+
+#Our eigth step is using Contour Detection in order to detect the outlines of the liquid.
+
+def contour_detection(self, image: np.ndarray) -> List[np.ndarray]:
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    min_area = 100
+    filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
+
+    return filtered_contours
