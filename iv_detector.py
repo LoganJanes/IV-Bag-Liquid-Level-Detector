@@ -60,9 +60,33 @@ def thresholding(self, image: np.ndarray, threshold_value: int = 127) -> np.ndar
     _, thresh = cv2.threshold(image, threshold_value, 255, cv2.THRESH_BINARY)
     return thresh
 
-    #Our sixth step is to use morphological closing to fill in any holes in the thresholded binary image.
+#Our sixth step is to use morphological closing to fill in any holes in the thresholded binary image.
 
 def morphological_closing(self, image: np.ndarray, kernel_size: int = 5) -> np.ndarray:
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
         closed = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
         return closed
+
+#Our seventh step is the most complex, where we will calculate the fluid height through counting the pixels within the ROI to measure fill.
+
+def calculate_fluid_height(self, image: np.ndarray, roi_coords: Tuple[int, int, int, int]) -> Tuple[int, float]:
+    x, y, w, h = roi_coords
+    roi = image[y:y+h, x:x+w]
+    fluid_top = -1
+    fluid_bottom = -1
+    for i in range(roi.shape[0]):
+        if np.any(roi[i, :] > 0):
+            fluid_top = i
+            break
+    for i in range(roi.shape[0] - 1, -1, -1):
+        if np.any(roi[i, :] > 0):
+            fluid_bottom = i
+            break
+    if fluid_top != -1 and fluid_bottom != -1:
+        fluid_height_pixels = fluid_bottom - fluid_top
+        fluid_level_percentage = (fluid_height_pixels / h) * 100
+    else:
+        fluid_height_pixels = 0
+        fluid_level_percentage = 0.0
+
+    return fluid_height_pixels, fluid_level_percentage
