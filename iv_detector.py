@@ -53,10 +53,16 @@ def region_of_interest(self, image: np.ndarray,
     roi_image = cv2.bitwise_and(image, image, mask=mask)
     return roi_image, roi_coords
 
-    #Our fifth step is to use thresholding to binarize the image intensities to either white or gray. White pixels should be liquid while remaining black pixels are not.
-    #_ is used to ignore the threshold value and only return the resulting image.
+#Our fifth step is to use thresholding to binarize the image intensities to either white or gray. White pixels should be liquid while remaining black pixels are not.
+#_ is used to ignore the threshold value and only return the resulting image.
 
-    def thresholding(self, image: np.ndarray, threshold_value: int = 127) -> np.ndarray:
+def thresholding(self, image: np.ndarray, threshold_value: int = 127) -> np.ndarray:
     _, thresh = cv2.threshold(image, threshold_value, 255, cv2.THRESH_BINARY)
     return thresh
 
+    #Our sixth step is to use morphological closing to fill in any holes in the thresholded binary image.
+
+def morphological_closing(self, image: np.ndarray, kernel_size: int = 5) -> np.ndarray:
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        closed = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+        return closed
