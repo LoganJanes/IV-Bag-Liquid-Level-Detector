@@ -99,3 +99,38 @@ def contour_detection(self, image: np.ndarray) -> List[np.ndarray]:
     filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
 
     return filtered_contours
+
+
+#Now that we have each image processing step, we will combine them all into a full pipeline implementation.
+
+def detect_liquid_level(self, image_path: str, roi_coords=None, low_threshold=30):
+    image = cv2.imread(image_path)
+    if image is None:
+        raise ValueError("Image failed to load")
+    original_image = image.copy()
+    
+    gray = self.grayscale(image)
+    blurred = self.median_blur(gray)
+    edges = self.canny_edge_detection(blurred)
+    roi_edges, roi_coords = self.region_of_interest(edges, roi_coords)
+    thresh = self.thresholding(roi_edges)
+    closed = self.morphological_closing(thresh)
+    fluid_height_pixels, fluid_level_percentage = self.calculate_fluid_height(closed, roi_coords)
+    contours = self.contour_detection(closed)
+    
+    is_low = fluid_level_percentage < low_threshold
+    return {
+        'original_image': original_image,
+        'processed_image': closed,
+        'fluid_height_pixels': fluid_height_pixels,
+        'fluid_level_percentage': fluid_level_percentage,
+        'is_low': is_low,
+        'roi_coords': roi_coords,
+        'contours': contours,
+        'processing_steps': self.processing_steps if self.debug else None
+    }
+
+detector = IVBagLevelDetector(debug=True)
+results = detector.detect_liquid_level("test_iv.jpg")
+print(results["fluid_level_percentage"])
+
