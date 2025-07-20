@@ -51,7 +51,12 @@ def region_of_interest(self, image: np.ndarray,
     mask = np.zeros(image.shape[:2], dtype=np.uint8)
     mask[y:y+h, x:x+w] = 255
     roi_image = cv2.bitwise_and(image, image, mask=mask)
-    if self.debug:
-        self.processing_steps['roi'] = roi_image
-        self.processing_steps['roi_coords'] = roi_coords
     return roi_image, roi_coords
+
+    #Our fifth step is to use thresholding to binarize the image intensities to either white or gray. White pixels should be liquid while remaining black pixels are not.
+    #_ is used to ignore the threshold value and only return the resulting image.
+
+    def thresholding(self, image: np.ndarray, threshold_value: int = 127) -> np.ndarray:
+    _, thresh = cv2.threshold(image, threshold_value, 255, cv2.THRESH_BINARY)
+    return thresh
+
