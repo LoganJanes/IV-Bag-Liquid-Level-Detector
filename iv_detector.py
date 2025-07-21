@@ -5,284 +5,16 @@ import os
 import glob
 
 
-def find_iv_bag(image):
-    """Find the IV bag in the image"""
-    # Step 1: Convert the image to grayscale to remove color information and simplify processing. We do this to find the boundaries and use the colour later to detect the actual liquid.
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+def detect_iv_bag_level_consolidated(image_path):
+    """Consolidated IV bag detection with all processing in 12 steps"""
     
-    # Step 2: Apply adaptive thresholding to create a binary image that separates objects from background
-    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 2)
-    
-    # Step 3: Apply morphological closing to fill small gaps and connect broken contours
-    kernel = np.ones((5, 5), np.uint8)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-    
-    # Step 4: Find contours to detect object boundaries in the binary image
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if contours:
-        good_contours = []
-        for contour in contours:
-            # Step 5: Filter contours by area to find objects large enough to be IV bags
-            area = cv2.contourArea(contour)
-            if area > 5000:  # Big enough to be a bag
-                # Step 6: Calculate bounding rectangle and aspect ratio to identify bag-like shapes
-                x, y, w, h = cv2.boundingRect(contour)
-                if w > 0:
-                    aspect_ratio = h / w
-                    if 1.5 < aspect_ratio < 4.0:  # Bag-like shape
-                        good_contours.append((contour, area))
-        
-        if good_contours:
-            # Step 7: Select the largest qualifying contour as the IV bag
-            biggest_contour = max(good_contours, key=lambda x: x[1])[0]
-            x, y, w, h = cv2.boundingRect(biggest_contour)
-            
-            # Step 8: Add padding around the detected bag area for better processing
-            padding = 5
-            height, width = gray.shape
-            x = max(0, x - padding)
-            y = max(0, y - padding)
-            w = min(width - x, w + 2 * padding)
-            h = min(height - y, h + 2 * padding)
-            return x, y, w, h
-    
-    # Step 9: If bag detection fails, return a default region in the center of the image
-    height, width = gray.shape
-    return width//4, height//6, width//2, 2*height//3
-
-
-def find_liquid_by_color(image, bag_coords):
-    """Look for liquid using colors - simplified to use only clear/general liquid detection"""
-    x, y, w, h = bag_coords
-    bag_area = image[y:y+h, x:x+w]
-    
-    if bag_area.size == 0:
-        return 5.0, None
-    
-    # Step 1: Convert BGR color space to HSV for more robust color detection
-    hsv = cv2.cvtColor(bag_area, cv2.COLOR_BGR2HSV)
-
-    # Step 2: Create color mask for liquid using broad HSV range to capture all liquid types
-    # This range captures red, blue, clear, and other liquid colors in one mask
-    lower_liquid = np.array([0, 30, 80])
-    upper_liquid = np.array([180, 255, 255])
-    liquid_mask = cv2.inRange(hsv, lower_liquid, upper_liquid)
-
-    # Step 3: Apply morphological opening to remove noise from the mask
-    kernel = np.ones((3, 3), np.uint8)
-    liquid_mask = cv2.morphologyEx(liquid_mask, cv2.MORPH_OPEN, kernel)
-    # Step 4: Apply morphological closing to fill small gaps in the detected liquid regions
-    liquid_mask = cv2.morphologyEx(liquid_mask, cv2.MORPH_CLOSE, kernel)
-
-    # Step 5: Analyze each horizontal row to determine liquid presence and distribution
-    height = liquid_mask.shape[0]
-    liquid_in_each_row = []
-
-    for row in range(height):
-        # Step 6: Calculate the percentage of liquid pixels in each row
-        liquid_pixels = np.sum(liquid_mask[row, :] > 0)
-        total_pixels = liquid_mask.shape[1]
-        liquid_percentage = liquid_pixels / max(total_pixels, 1)
-        liquid_in_each_row.append(liquid_percentage)
-
-    # Step 7: Apply threshold to determine which rows contain significant liquid
-    threshold = 0.15
-    rows_with_liquid = np.array(liquid_in_each_row) > threshold
-
-    if np.any(rows_with_liquid):
-        # Step 8: Find the top and bottom boundaries of the liquid region
-        liquid_row_numbers = np.where(rows_with_liquid)[0]
-        top_liquid_row = liquid_row_numbers[0]
-        bottom_liquid_row = liquid_row_numbers[-1]
-
-        # Step 9: Calculate liquid height and position metrics
-        liquid_height = bottom_liquid_row - top_liquid_row + 1
-        bottom_position = (height - bottom_liquid_row) / height
-        liquid_size = liquid_height / height
-
-        # Step 10: Calculate liquid level percentage based on size and position
-        if liquid_size < 0.2:
-            level = (1 - bottom_position * 1.2) * 100
-            level = max(5, min(25, level))
-        else:
-            center_y = (top_liquid_row + bottom_liquid_row) / 2
-            center_position = 1 - (center_y / height)
-            level = (center_position * 0.6 + liquid_size * 0.4) * 100
-
-        return level, liquid_mask
-    else:
-        return 5.0, liquid_mask
-
-
-def check_brightness_changes(bag_area):
-    """Look for brightness changes to find liquid level"""
-    if bag_area.size == 0:
-        return 10.0
-    
-    height, width = bag_area.shape
-    num_strips = min(20, height // 3)
-    if num_strips <= 0:
-        return 10.0
-    
-    strip_height = height // num_strips
-    brightness_values = []
-
-    # Step 1: Divide the image into horizontal strips for brightness analysis
-    for i in range(num_strips):
-        start_row = i * strip_height
-        end_row = min((i + 1) * strip_height, height)
-        strip = bag_area[start_row:end_row, :]
-        if strip.size > 0:
-            # Step 2: Calculate average brightness for each horizontal strip
-            avg_brightness = np.mean(strip)
-            brightness_values.append(avg_brightness)
-
-    if len(brightness_values) < 3:
-        return 10.0
-
-    # Step 3: Calculate gradient to detect sudden brightness changes between strips
-    brightness_values = np.array(brightness_values)
-    changes = np.gradient(brightness_values)
-
-    # Step 4: Identify significant brightness drops that indicate liquid boundaries
-    big_drops = []
-    for i in range(len(changes)):
-        if changes[i] < -10:
-            drop_size = abs(changes[i])
-            big_drops.append((i, drop_size))
-
-    if big_drops:
-        # Step 5: Find the most significant brightness drop as liquid boundary indicator
-        biggest_drop_index = max(big_drops, key=lambda x: x[1])[0]
-    else:
-        # Step 6: If no major drops, look for areas significantly darker than average
-        avg_brightness = np.mean(brightness_values)
-        dark_areas = brightness_values < (avg_brightness * 0.8)
-        if np.any(dark_areas):
-            biggest_drop_index = np.where(dark_areas)[0][0]
-        else:
-            biggest_drop_index = len(brightness_values) // 2
-
-    # Step 7: Convert the detected boundary position to a liquid level percentage
-    level = (1 - biggest_drop_index / len(brightness_values)) * 100
-    return level
-
-
-def detect_iv_bag_level(image_path):
-    """Main function to detect IV bag liquid level"""
-    # Step 1: Load the input image using OpenCV
+    # Load the input image
     image = cv2.imread(image_path)
     if image is None:
         print(f"Can't load image: {image_path}")
         return None
     
-    # Step 2: Detect the IV bag location within the image
-    bag_x, bag_y, bag_w, bag_h = find_iv_bag(image)
-    
-    # Step 3: Convert the image to grayscale for brightness-based analysis
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    bag_area = gray[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w]
-
-    # Step 4: Apply color-based liquid detection method
-    color_level, liquid_mask = find_liquid_by_color(image, (bag_x, bag_y, bag_w, bag_h))
-    # Step 5: Apply brightness-based liquid detection method
-    brightness_level = check_brightness_changes(bag_area)
-
-    # Step 6: Apply Otsu's thresholding for automatic binary threshold selection
-    _, binary = cv2.threshold(bag_area, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # Step 7: Find contours in the thresholded image for shape-based analysis
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    contour_level = 5.0
-    if contours:
-        # Step 8: Select the largest contour as the main liquid region
-        biggest_contour = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(biggest_contour)
-        if area > 100:
-            # Step 9: Calculate bounding rectangle and position metrics from contour
-            x, y, w, h = cv2.boundingRect(biggest_contour)
-            center_y = y + h // 2
-            position = 1 - (center_y / bag_h)
-            size_factor = min(area / (bag_w * bag_h * 0.5), 1.0)
-            # Step 10: Combine position and size factors for contour-based level estimation
-            contour_level = (position * 0.7 + size_factor * 0.3) * 100
-
-    # Step 11: Combine results from all detection methods using weighted averaging
-    if color_level <= 30:
-        final_level = color_level * 0.8 + brightness_level * 0.2
-    else:
-        final_level = color_level * 0.6 + brightness_level * 0.3 + contour_level * 0.1
-
-    # Step 12: Apply special adjustment for very low liquid levels
-    if color_level < 15 and brightness_level < 25:
-        final_level = min(final_level, 20)
-
-    # Step 13: Clamp the final level to realistic bounds
-    final_level = max(2, min(95, final_level))
-
-    # Step 14: Classify liquid level into status categories
-    if final_level >= 60:
-        status = "high"
-    elif final_level >= 30:
-        status = "medium"
-    else:
-        status = "low"
-
-    # Step 15: Save visualization image showing the detection results
-    save_result_image(image, (bag_x, bag_y, bag_w, bag_h), status, liquid_mask, image_path)
-    save_processing_steps_visualization(image, (bag_x, bag_y, bag_w, bag_h), status, image_path)
-
-    return status
-
-
-def save_result_image(image, bag_coords, status, liquid_mask, original_path):
-    """Save an image showing the detected liquid"""
-    bag_x, bag_y, bag_w, bag_h = bag_coords
-    result_image = image.copy()
-    overlay = np.zeros_like(result_image)
-
-    if liquid_mask is not None and liquid_mask.size > 0:
-        # Step 1: Choose visualization color based on detected liquid status
-        if status == 'low':
-            color = (0, 0, 255)  # Red
-        elif status == 'medium':
-            color = (0, 165, 255)  # Orange
-        else:
-            color = (0, 255, 0)  # Green
-
-        # Step 2: Create colored overlay for detected liquid regions
-        bag_overlay = overlay[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w]
-        bag_overlay[liquid_mask > 0] = color
-        # Step 3: Blend the overlay with the original image using alpha blending
-        transparency = 0.4
-        result_image = cv2.addWeighted(result_image, 1-transparency, overlay, transparency, 0)
-
-        # Step 4: Find contours in the liquid mask for boundary visualization
-        contours, _ = cv2.findContours(liquid_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in contours:
-            if cv2.contourArea(contour) > 50:
-                # Step 5: Adjust contour coordinates to match the original image coordinate system
-                adjusted_contour = contour + np.array([bag_x, bag_y])
-                # Step 6: Draw contour boundaries on the result image
-                cv2.drawContours(result_image, [adjusted_contour], -1, color, 2)
-
-    # Step 7: Draw bounding rectangle around the detected bag area
-    cv2.rectangle(result_image, (bag_x, bag_y), (bag_x + bag_w, bag_y + bag_h), (255, 255, 255), 1)
-
-    # Step 8: Save the annotated result image to disk
-    filename_without_extension = os.path.splitext(original_path)[0]
-    result_path = f"{filename_without_extension}_result.jpg"
-    cv2.imwrite(result_path, result_image)
-
-    return result_path
-
-
-def save_processing_steps_visualization(image, bag_coords, status, original_path):
-    """Create a comprehensive visualization showing all image processing steps (simplified)"""
-    bag_x, bag_y, bag_w, bag_h = bag_coords
-    
-    # Recreate all processing steps for visualization
+    # Initialize variables for analysis
     steps = []
     step_titles = []
     
@@ -297,21 +29,51 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     steps.append(gray_bgr)
     step_titles.append("2. Grayscale Conversion")
     
-    # Step 3: Adaptive thresholding
+    # Step 3: Adaptive thresholding for Bag Detection
     binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 2)
     binary_bgr = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
     steps.append(binary_bgr)
     step_titles.append("3. Adaptive Thresholding")
     
-    # Step 4: Morphological closing
+    # Step 4: Morphological closing to find IV bag
     kernel = np.ones((5, 5), np.uint8)
     morph_closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
     morph_closed_bgr = cv2.cvtColor(morph_closed, cv2.COLOR_GRAY2BGR)
     steps.append(morph_closed_bgr)
     step_titles.append("4. Morphological Closing")
     
-    # Step 5: Contour detection for bag finding
+    # BAG FINDING LOGIC
     contours, _ = cv2.findContours(morph_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    bag_x = bag_y = bag_w = bag_h = 0
+    
+    if contours:
+        good_contours = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > 5000:  # Big enough to be a bag
+                x, y, w, h = cv2.boundingRect(contour)
+                if w > 0:
+                    aspect_ratio = h / w
+                    if 1.5 < aspect_ratio < 4.0:  # Bag-like shape
+                        good_contours.append((contour, area))
+        
+        if good_contours:
+            biggest_contour = max(good_contours, key=lambda x: x[1])[0]
+            x, y, w, h = cv2.boundingRect(biggest_contour)
+            # Add padding
+            padding = 5
+            height, width = gray.shape
+            bag_x = max(0, x - padding)
+            bag_y = max(0, y - padding)
+            bag_w = min(width - bag_x, w + 2 * padding)
+            bag_h = min(height - bag_y, h + 2 * padding)
+    
+    # Default region if bag detection fails
+    if bag_w == 0 or bag_h == 0:
+        height, width = gray.shape
+        bag_x, bag_y, bag_w, bag_h = width//4, height//6, width//2, 2*height//3
+    
+    # Step 5: Contour detection + bag highlighting
     contour_image = image.copy()
     cv2.drawContours(contour_image, contours, -1, (0, 255, 0), 2)
     cv2.rectangle(contour_image, (bag_x, bag_y), (bag_x + bag_w, bag_y + bag_h), (255, 0, 0), 3)
@@ -327,69 +89,176 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     step_titles.append("6. Extracted Bag Area")
     
     # Step 7: HSV conversion of bag area
+    hsv_display = np.zeros_like(image)
     if bag_area.size > 0:
         hsv_bag = cv2.cvtColor(bag_area, cv2.COLOR_BGR2HSV)
-        hsv_display = np.zeros_like(image)
         hsv_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = hsv_bag
-    else:
-        hsv_display = np.zeros_like(image)
     steps.append(hsv_display)
     step_titles.append("7. HSV Color Space")
     
-    # Step 8: Unified liquid mask (replaces the separate red/blue/clear masks)
+    # Step 8: Unified liquid mask and Analysis
     liquid_mask_display = np.zeros_like(image)
+    color_level = 5.0
+    liquid_mask = None
+    
     if bag_area.size > 0:
         hsv = cv2.cvtColor(bag_area, cv2.COLOR_BGR2HSV)
         lower_liquid = np.array([0, 30, 80])
         upper_liquid = np.array([180, 255, 255])
         liquid_mask = cv2.inRange(hsv, lower_liquid, upper_liquid)
+        
+        # COLOR-BASED ANALYSIS
+        kernel_small = np.ones((3, 3), np.uint8)
+        liquid_mask = cv2.morphologyEx(liquid_mask, cv2.MORPH_OPEN, kernel_small)
+        liquid_mask = cv2.morphologyEx(liquid_mask, cv2.MORPH_CLOSE, kernel_small)
+        
+        # Row-by-row analysis
+        height = liquid_mask.shape[0]
+        liquid_in_each_row = []
+        for row in range(height):
+            liquid_pixels = np.sum(liquid_mask[row, :] > 0)
+            total_pixels = liquid_mask.shape[1]
+            liquid_percentage = liquid_pixels / max(total_pixels, 1)
+            liquid_in_each_row.append(liquid_percentage)
+            
+        threshold = 0.15
+        rows_with_liquid = np.array(liquid_in_each_row) > threshold
+        
+        if np.any(rows_with_liquid):
+            liquid_row_numbers = np.where(rows_with_liquid)[0]
+            top_liquid_row = liquid_row_numbers[0]
+            bottom_liquid_row = liquid_row_numbers[-1]
+            liquid_height = bottom_liquid_row - top_liquid_row + 1
+            bottom_position = (height - bottom_liquid_row) / height
+            liquid_size = liquid_height / height
+            
+            if liquid_size < 0.2:
+                color_level = (1 - bottom_position * 1.2) * 100
+                color_level = max(5, min(25, color_level))
+            else:
+                center_y = (top_liquid_row + bottom_liquid_row) / 2
+                center_position = 1 - (center_y / height)
+                color_level = (center_position * 0.6 + liquid_size * 0.4) * 100
+        
         liquid_mask_bgr = cv2.cvtColor(liquid_mask, cv2.COLOR_GRAY2BGR)
         liquid_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = liquid_mask_bgr
+    
     steps.append(liquid_mask_display)
-    step_titles.append("8. Unified Liquid Mask")
+    step_titles.append("8. Unified Liquid Mask + Analysis")
     
     # Step 9: Morphological operations on liquid mask
     morph_mask_display = np.zeros_like(image)
-    if bag_area.size > 0:
-        kernel_small = np.ones((3, 3), np.uint8)
-        morph_opened = cv2.morphologyEx(liquid_mask, cv2.MORPH_OPEN, kernel_small)
-        morph_final = cv2.morphologyEx(morph_opened, cv2.MORPH_CLOSE, kernel_small)
-        morph_mask_bgr = cv2.cvtColor(morph_final, cv2.COLOR_GRAY2BGR)
+    if bag_area.size > 0 and liquid_mask is not None:
+        morph_mask_bgr = cv2.cvtColor(liquid_mask, cv2.COLOR_GRAY2BGR)
         morph_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = morph_mask_bgr
     steps.append(morph_mask_display)
-    step_titles.append("9. Morphology on Liquid Mask")
+    step_titles.append("9. Final Liquid Mask")
     
-    # Step 10: Otsu thresholding
+    # Step 10: Otsu thresholding  (with Contour Analysis)
     otsu_display = np.zeros_like(image)
+    contour_level = 5.0
+    
     if bag_area.size > 0:
         bag_gray = cv2.cvtColor(bag_area, cv2.COLOR_BGR2GRAY)
         _, otsu_thresh = cv2.threshold(bag_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        contours_otsu, _ = cv2.findContours(otsu_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours_otsu:
+            biggest_contour = max(contours_otsu, key=cv2.contourArea)
+            area = cv2.contourArea(biggest_contour)
+            if area > 100:
+                x, y, w, h = cv2.boundingRect(biggest_contour)
+                center_y = y + h // 2
+                position = 1 - (center_y / bag_h)
+                size_factor = min(area / (bag_w * bag_h * 0.5), 1.0)
+                contour_level = (position * 0.7 + size_factor * 0.3) * 100
+        
         otsu_bgr = cv2.cvtColor(otsu_thresh, cv2.COLOR_GRAY2BGR)
         otsu_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = otsu_bgr
-    steps.append(otsu_display)
-    step_titles.append("10. Otsu Thresholding")
     
-    # Step 11: Brightness analysis visualization
+    steps.append(otsu_display)
+    step_titles.append("10. Otsu Thresholding + Contour Analysis")
+    
+    # Step 11: Brightness Analysis and Detection
     brightness_display = image.copy()
+    brightness_level = 10.0
+    
     if bag_area.size > 0:
         bag_gray = cv2.cvtColor(bag_area, cv2.COLOR_BGR2GRAY)
         height = bag_gray.shape[0]
         num_strips = min(20, height // 3)
+        
         if num_strips > 0:
             strip_height = height // num_strips
+            brightness_values = []
+            
+            # BRIGHTNESS ANALYSIS
             for i in range(num_strips):
                 start_row = i * strip_height
                 end_row = min((i + 1) * strip_height, height)
+                strip = bag_gray[start_row:end_row, :]
+                if strip.size > 0:
+                    avg_brightness = np.mean(strip)
+                    brightness_values.append(avg_brightness)
+                
+                # Draw visualization lines
                 y_pos = bag_y + start_row
                 cv2.line(brightness_display, (bag_x, y_pos), (bag_x + bag_w, y_pos), (0, 255, 255), 1)
-    steps.append(brightness_display)
-    step_titles.append("11. Brightness Analysis Strips")
+            
+            if len(brightness_values) >= 3:
+                brightness_values = np.array(brightness_values)
+                changes = np.gradient(brightness_values)
+                
+                # Find significant drops
+                big_drops = []
+                for i in range(len(changes)):
+                    if changes[i] < -10:
+                        drop_size = abs(changes[i])
+                        big_drops.append((i, drop_size))
+                
+                if big_drops:
+                    biggest_drop_index = max(big_drops, key=lambda x: x[1])[0]
+                else:
+                    avg_brightness = np.mean(brightness_values)
+                    dark_areas = brightness_values < (avg_brightness * 0.8)
+                    if np.any(dark_areas):
+                        biggest_drop_index = np.where(dark_areas)[0][0]
+                    else:
+                        biggest_drop_index = len(brightness_values) // 2
+                
+                brightness_level = (1 - biggest_drop_index / len(brightness_values)) * 100
     
-    # Step 12: Final result with liquid detection
+    steps.append(brightness_display)
+    step_titles.append("11. Brightness Analysis + Detection")
+    
+    # Step 12: Final result (CALCULATION AND CLASSIFICATION)
+
+    # Combine all methods
+    if color_level <= 30:
+        final_level = color_level * 0.8 + brightness_level * 0.2
+    else:
+        final_level = color_level * 0.6 + brightness_level * 0.3 + contour_level * 0.1
+    
+    # Special adjustment for very low levels
+    if color_level < 15 and brightness_level < 25:
+        final_level = min(final_level, 20)
+    
+    # Clamp to realistic bounds
+    final_level = max(2, min(95, final_level))
+    
+    # Classify into status
+    if final_level >= 60:
+        status = "high"
+    elif final_level >= 30:
+        status = "medium"
+    else:
+        status = "low"
+    
+    # Create final result visualization
     final_result = image.copy()
     overlay = np.zeros_like(final_result)
     
-    if bag_area.size > 0:
+    if bag_area.size > 0 and liquid_mask is not None:
         # Choose color based on status
         if status == 'low':
             color = (0, 0, 255)  # Red
@@ -398,33 +267,28 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
         else:
             color = (0, 255, 0)  # Green
             
-        # Create the final liquid overlay
-        if 'morph_final' in locals():
-            bag_overlay = overlay[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w]
-            bag_overlay[morph_final > 0] = color
-            transparency = 0.4
-            final_result = cv2.addWeighted(final_result, 1-transparency, overlay, transparency, 0)
-            
-            # Draw contours
-            contours_final, _ = cv2.findContours(morph_final, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for contour in contours_final:
-                if cv2.contourArea(contour) > 50:
-                    adjusted_contour = contour + np.array([bag_x, bag_y])
-                    cv2.drawContours(final_result, [adjusted_contour], -1, color, 2)
+        # Create liquid overlay
+        bag_overlay = overlay[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w]
+        bag_overlay[liquid_mask > 0] = color
+        transparency = 0.4
+        final_result = cv2.addWeighted(final_result, 1-transparency, overlay, transparency, 0)
+        
+        # Draw contours
+        contours_final, _ = cv2.findContours(liquid_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours_final:
+            if cv2.contourArea(contour) > 50:
+                adjusted_contour = contour + np.array([bag_x, bag_y])
+                cv2.drawContours(final_result, [adjusted_contour], -1, color, 2)
     
     cv2.rectangle(final_result, (bag_x, bag_y), (bag_x + bag_w, bag_y + bag_h), (255, 255, 255), 2)
     steps.append(final_result)
-    step_titles.append("12. Final Result with Detection")
+    step_titles.append("12. Final Result + Level Classification")
     
-    # Create a grid layout to show all steps
+    # Create and save visualization grid
     rows = 3
     cols = 4
-    img_height, img_width = image.shape[:2]
-    
-    # Resize images for grid display
     cell_width = 400
     cell_height = 300
-    
     grid_image = np.zeros((rows * cell_height, cols * cell_width, 3), dtype=np.uint8)
     
     for i, (step_img, title) in enumerate(zip(steps, step_titles)):
@@ -434,28 +298,27 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
         row = i // cols
         col = i % cols
         
-        # Resize the step image
         resized_step = cv2.resize(step_img, (cell_width - 20, cell_height - 40))
         
-        # Calculate position in grid
         y_start = row * cell_height + 10
         y_end = y_start + cell_height - 40
         x_start = col * cell_width + 10
         x_end = x_start + cell_width - 20
         
-        # Place the image
         grid_image[y_start:y_end, x_start:x_end] = resized_step
-        
-        # Add title text
         cv2.putText(grid_image, title, (x_start, y_start - 5), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
-    # Save the comprehensive processing steps visualization
-    filename_without_extension = os.path.splitext(original_path)[0]
+    # Save results
+    filename_without_extension = os.path.splitext(image_path)[0]
     steps_path = f"{filename_without_extension}_processing_steps.jpg"
-    cv2.imwrite(steps_path, grid_image)
+    result_path = f"{filename_without_extension}_result.jpg"
     
-    return steps_path
+    cv2.imwrite(steps_path, grid_image)
+    cv2.imwrite(result_path, final_result)
+    
+    print(f"Final level: {final_level:.1f}% - Status: {status}")
+    return status
 
 
 if __name__ == "__main__":
@@ -477,7 +340,7 @@ if __name__ == "__main__":
         # Test first 5 original images
         for image_path in original_images[:5]:
             try:
-                result = detect_iv_bag_level(image_path)
+                result = detect_iv_bag_level_consolidated(image_path)
                 print(f"{image_path}: {result} level")
             except Exception as error:
                 print(f"{image_path}: Error - {error}")
