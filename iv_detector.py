@@ -317,7 +317,6 @@ def detect_iv_bag_level_consolidated(image_path):
     cv2.imwrite(steps_path, grid_image)
     cv2.imwrite(result_path, final_result)
     
-    print(f"Final level: {final_level:.1f}% - Status: {status}")
     return status
 
 
@@ -327,22 +326,19 @@ if __name__ == "__main__":
     for extension in ['*.jpg', '*.jpeg', '*.png']:
         image_files.extend(glob.glob(extension))
     
-    # Filter out result and processing step images
-    original_images = []
+    # Filter to only specific images
+    target_images = []
     for image_path in image_files:
-        if not ('_result' in image_path or '_processing_steps' in image_path):
-            original_images.append(image_path)
+        filename = os.path.splitext(os.path.basename(image_path))[0].lower()
+        if filename in ['high_iv', 'low_iv', 'medium_iv']:
+            target_images.append(image_path)
     
-    if original_images:
-        print(f"Found {len(original_images)} original images to test:")
-        print("-" * 40)
-        
-        # Test first 5 original images
-        for image_path in original_images[:5]:
+    if target_images:
+        for image_path in target_images:
             try:
                 result = detect_iv_bag_level_consolidated(image_path)
-                print(f"{image_path}: {result} level")
+                print(f"{image_path}: {result}")
             except Exception as error:
                 print(f"{image_path}: Error - {error}")
     else:
-        print("No original image files found in current directory!")
+        print("No target images found (high_iv, low_iv, medium_iv)!")
