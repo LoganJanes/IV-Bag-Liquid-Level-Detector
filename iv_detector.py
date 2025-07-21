@@ -53,7 +53,7 @@ def find_iv_bag(image):
 
 
 def find_liquid_by_color(image, bag_coords):
-    """Look for liquid using colors"""
+    """Look for liquid using colors - simplified to use only clear/general liquid detection"""
     x, y, w, h = bag_coords
     bag_area = image[y:y+h, x:x+w]
     
@@ -63,70 +63,45 @@ def find_liquid_by_color(image, bag_coords):
     # Step 1: Convert BGR color space to HSV for more robust color detection
     hsv = cv2.cvtColor(bag_area, cv2.COLOR_BGR2HSV)
 
-    # Look for different liquid colors
-    all_masks = []
+    # Step 2: Create color mask for liquid using broad HSV range to capture all liquid types
+    # This range captures red, blue, clear, and other liquid colors in one mask
+    lower_liquid = np.array([0, 30, 80])
+    upper_liquid = np.array([180, 255, 255])
+    liquid_mask = cv2.inRange(hsv, lower_liquid, upper_liquid)
 
-    # Step 2: Create color masks for red liquid using HSV color ranges
-    lower_red1 = np.array([0, 50, 50])
-    upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([170, 50, 50])
-    upper_red2 = np.array([180, 255, 255])
-    red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    # Step 3: Combine red masks using bitwise OR operation since red wraps around in HSV
-    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
-    all_masks.append(red_mask)
-
-    # Step 4: Create color mask for blue liquid using HSV color range
-    lower_blue = np.array([100, 50, 50])
-    upper_blue = np.array([130, 255, 255])
-    blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
-    all_masks.append(blue_mask)
-
-    # Step 5: Create color mask for clear/transparent liquid using broader HSV range
-    lower_clear = np.array([0, 30, 80])
-    upper_clear = np.array([180, 255, 255])
-    clear_mask = cv2.inRange(hsv, lower_clear, upper_clear)
-    all_masks.append(clear_mask)
-
-    # Step 6: Combine all color masks using bitwise OR to detect any liquid color
-    final_mask = np.zeros_like(all_masks[0])
-    for mask in all_masks:
-        final_mask = cv2.bitwise_or(final_mask, mask)
-
-    # Step 7: Apply morphological opening to remove noise from the combined mask
+    # Step 3: Apply morphological opening to remove noise from the mask
     kernel = np.ones((3, 3), np.uint8)
-    final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel)
-    # Step 8: Apply morphological closing to fill small gaps in the detected liquid regions
-    final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel)
+    liquid_mask = cv2.morphologyEx(liquid_mask, cv2.MORPH_OPEN, kernel)
+    # Step 4: Apply morphological closing to fill small gaps in the detected liquid regions
+    liquid_mask = cv2.morphologyEx(liquid_mask, cv2.MORPH_CLOSE, kernel)
 
-    # Step 9: Analyze each horizontal row to determine liquid presence and distribution
-    height = final_mask.shape[0]
+    # Step 5: Analyze each horizontal row to determine liquid presence and distribution
+    height = liquid_mask.shape[0]
     liquid_in_each_row = []
 
     for row in range(height):
-        # Step 10: Calculate the percentage of liquid pixels in each row
-        liquid_pixels = np.sum(final_mask[row, :] > 0)
-        total_pixels = final_mask.shape[1]
+        # Step 6: Calculate the percentage of liquid pixels in each row
+        liquid_pixels = np.sum(liquid_mask[row, :] > 0)
+        total_pixels = liquid_mask.shape[1]
         liquid_percentage = liquid_pixels / max(total_pixels, 1)
         liquid_in_each_row.append(liquid_percentage)
 
-    # Step 11: Apply threshold to determine which rows contain significant liquid
+    # Step 7: Apply threshold to determine which rows contain significant liquid
     threshold = 0.15
     rows_with_liquid = np.array(liquid_in_each_row) > threshold
 
     if np.any(rows_with_liquid):
-        # Step 12: Find the top and bottom boundaries of the liquid region
+        # Step 8: Find the top and bottom boundaries of the liquid region
         liquid_row_numbers = np.where(rows_with_liquid)[0]
         top_liquid_row = liquid_row_numbers[0]
         bottom_liquid_row = liquid_row_numbers[-1]
 
-        # Step 13: Calculate liquid height and position metrics
+        # Step 9: Calculate liquid height and position metrics
         liquid_height = bottom_liquid_row - top_liquid_row + 1
         bottom_position = (height - bottom_liquid_row) / height
         liquid_size = liquid_height / height
 
-        # Step 14: Calculate liquid level percentage based on size and position
+        # Step 10: Calculate liquid level percentage based on size and position
         if liquid_size < 0.2:
             level = (1 - bottom_position * 1.2) * 100
             level = max(5, min(25, level))
@@ -135,9 +110,9 @@ def find_liquid_by_color(image, bag_coords):
             center_position = 1 - (center_y / height)
             level = (center_position * 0.6 + liquid_size * 0.4) * 100
 
-        return level, final_mask
+        return level, liquid_mask
     else:
-        return 5.0, final_mask
+        return 5.0, liquid_mask
 
 
 def check_brightness_changes(bag_area):
@@ -256,6 +231,7 @@ def detect_iv_bag_level(image_path):
 
     # Step 15: Save visualization image showing the detection results
     save_result_image(image, (bag_x, bag_y, bag_w, bag_h), status, liquid_mask, image_path)
+    save_processing_steps_visualization(image, (bag_x, bag_y, bag_w, bag_h), status, image_path)
 
     return status
 
@@ -303,7 +279,7 @@ def save_result_image(image, bag_coords, status, liquid_mask, original_path):
 
 
 def save_processing_steps_visualization(image, bag_coords, status, original_path):
-    """Create a comprehensive visualization showing all image processing steps"""
+    """Create a comprehensive visualization showing all image processing steps (simplified)"""
     bag_x, bag_y, bag_w, bag_h = bag_coords
     
     # Recreate all processing steps for visualization
@@ -317,7 +293,7 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     
     # Step 2: Grayscale conversion
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for display
+    gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     steps.append(gray_bgr)
     step_titles.append("2. Grayscale Conversion")
     
@@ -344,7 +320,6 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     
     # Step 6: Extract bag area
     bag_area = image[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w]
-    # Resize to match other images for display
     bag_display = np.zeros_like(image)
     if bag_area.size > 0:
         bag_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = bag_area
@@ -361,66 +336,30 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     steps.append(hsv_display)
     step_titles.append("7. HSV Color Space")
     
-    # Step 8: Red liquid mask
-    red_mask_display = np.zeros_like(image)
+    # Step 8: Unified liquid mask (replaces the separate red/blue/clear masks)
+    liquid_mask_display = np.zeros_like(image)
     if bag_area.size > 0:
         hsv = cv2.cvtColor(bag_area, cv2.COLOR_BGR2HSV)
-        lower_red1 = np.array([0, 50, 50])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([170, 50, 50])
-        upper_red2 = np.array([180, 255, 255])
-        red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
-        red_mask_bgr = cv2.cvtColor(red_mask, cv2.COLOR_GRAY2BGR)
-        red_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = red_mask_bgr
-    steps.append(red_mask_display)
-    step_titles.append("8. Red Liquid Mask")
+        lower_liquid = np.array([0, 30, 80])
+        upper_liquid = np.array([180, 255, 255])
+        liquid_mask = cv2.inRange(hsv, lower_liquid, upper_liquid)
+        liquid_mask_bgr = cv2.cvtColor(liquid_mask, cv2.COLOR_GRAY2BGR)
+        liquid_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = liquid_mask_bgr
+    steps.append(liquid_mask_display)
+    step_titles.append("8. Unified Liquid Mask")
     
-    # Step 9: Blue liquid mask
-    blue_mask_display = np.zeros_like(image)
-    if bag_area.size > 0:
-        lower_blue = np.array([100, 50, 50])
-        upper_blue = np.array([130, 255, 255])
-        blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
-        blue_mask_bgr = cv2.cvtColor(blue_mask, cv2.COLOR_GRAY2BGR)
-        blue_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = blue_mask_bgr
-    steps.append(blue_mask_display)
-    step_titles.append("9. Blue Liquid Mask")
-    
-    # Step 10: Clear liquid mask
-    clear_mask_display = np.zeros_like(image)
-    if bag_area.size > 0:
-        lower_clear = np.array([0, 30, 80])
-        upper_clear = np.array([180, 255, 255])
-        clear_mask = cv2.inRange(hsv, lower_clear, upper_clear)
-        clear_mask_bgr = cv2.cvtColor(clear_mask, cv2.COLOR_GRAY2BGR)
-        clear_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = clear_mask_bgr
-    steps.append(clear_mask_display)
-    step_titles.append("10. Clear Liquid Mask")
-    
-    # Step 11: Combined color masks
-    combined_mask_display = np.zeros_like(image)
-    if bag_area.size > 0:
-        combined_mask = cv2.bitwise_or(red_mask, blue_mask)
-        combined_mask = cv2.bitwise_or(combined_mask, clear_mask)
-        combined_mask_bgr = cv2.cvtColor(combined_mask, cv2.COLOR_GRAY2BGR)
-        combined_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = combined_mask_bgr
-    steps.append(combined_mask_display)
-    step_titles.append("11. Combined Color Masks")
-    
-    # Step 12: Morphological operations on combined mask
+    # Step 9: Morphological operations on liquid mask
     morph_mask_display = np.zeros_like(image)
     if bag_area.size > 0:
         kernel_small = np.ones((3, 3), np.uint8)
-        morph_opened = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_small)
+        morph_opened = cv2.morphologyEx(liquid_mask, cv2.MORPH_OPEN, kernel_small)
         morph_final = cv2.morphologyEx(morph_opened, cv2.MORPH_CLOSE, kernel_small)
         morph_mask_bgr = cv2.cvtColor(morph_final, cv2.COLOR_GRAY2BGR)
         morph_mask_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = morph_mask_bgr
     steps.append(morph_mask_display)
-    step_titles.append("12. Morphology on Color Mask")
+    step_titles.append("9. Morphology on Liquid Mask")
     
-    # Step 13: Otsu thresholding
+    # Step 10: Otsu thresholding
     otsu_display = np.zeros_like(image)
     if bag_area.size > 0:
         bag_gray = cv2.cvtColor(bag_area, cv2.COLOR_BGR2GRAY)
@@ -428,9 +367,9 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
         otsu_bgr = cv2.cvtColor(otsu_thresh, cv2.COLOR_GRAY2BGR)
         otsu_display[bag_y:bag_y+bag_h, bag_x:bag_x+bag_w] = otsu_bgr
     steps.append(otsu_display)
-    step_titles.append("13. Otsu Thresholding")
+    step_titles.append("10. Otsu Thresholding")
     
-    # Step 14: Brightness analysis visualization
+    # Step 11: Brightness analysis visualization
     brightness_display = image.copy()
     if bag_area.size > 0:
         bag_gray = cv2.cvtColor(bag_area, cv2.COLOR_BGR2GRAY)
@@ -441,13 +380,12 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
             for i in range(num_strips):
                 start_row = i * strip_height
                 end_row = min((i + 1) * strip_height, height)
-                # Draw horizontal lines to show brightness analysis strips
                 y_pos = bag_y + start_row
                 cv2.line(brightness_display, (bag_x, y_pos), (bag_x + bag_w, y_pos), (0, 255, 255), 1)
     steps.append(brightness_display)
-    step_titles.append("14. Brightness Analysis Strips")
+    step_titles.append("11. Brightness Analysis Strips")
     
-    # Step 15: Final result with liquid detection
+    # Step 12: Final result with liquid detection
     final_result = image.copy()
     overlay = np.zeros_like(final_result)
     
@@ -476,10 +414,10 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     
     cv2.rectangle(final_result, (bag_x, bag_y), (bag_x + bag_w, bag_y + bag_h), (255, 255, 255), 2)
     steps.append(final_result)
-    step_titles.append("15. Final Result with Detection")
+    step_titles.append("12. Final Result with Detection")
     
     # Create a grid layout to show all steps
-    rows = 4
+    rows = 3
     cols = 4
     img_height, img_width = image.shape[:2]
     
@@ -520,28 +458,28 @@ def save_processing_steps_visualization(image, bag_coords, status, original_path
     return steps_path
 
 
-# Test the code
 if __name__ == "__main__":
     # Find all image files
     image_files = []
     for extension in ['*.jpg', '*.jpeg', '*.png']:
         image_files.extend(glob.glob(extension))
     
-    if image_files:
-        print(f"Found {len(image_files)} images to test:")
+    # Filter out result and processing step images
+    original_images = []
+    for image_path in image_files:
+        if not ('_result' in image_path or '_processing_steps' in image_path):
+            original_images.append(image_path)
+    
+    if original_images:
+        print(f"Found {len(original_images)} original images to test:")
         print("-" * 40)
         
-        # Test first 5 images
-        for image_path in image_files[:5]:
+        # Test first 5 original images
+        for image_path in original_images[:5]:
             try:
                 result = detect_iv_bag_level(image_path)
                 print(f"{image_path}: {result} level")
             except Exception as error:
                 print(f"{image_path}: Error - {error}")
     else:
-        print("No image files found in current directory!")
-
-    print("\nHow to use this code:")
-    print('result = detect_iv_bag_level("my_iv_bag_photo.jpg")')
-    print('print(result)  # Will show: "high", "medium", or "low"')
-    print("# Also creates a result image showing the detected liquid")
+        print("No original image files found in current directory!")
